@@ -1,0 +1,16 @@
+# project.yaml
+name: Générateur des créneaux de surveillance
+version: 1.0.0
+author: Mohamed L. Baklouti
+description: >
+  Intelligent scheduling and export system for exam affectations.
+  Includes PDF/Word export, database integration, and smart assignment logic.
+license: MIT
+dependencies:
+  - PyQt5
+  - pandas
+  - python-docx
+  - openpyxl
+  - reportlab
+  - cryptography
+  - pyinstaller
