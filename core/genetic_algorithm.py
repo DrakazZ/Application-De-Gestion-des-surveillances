@@ -17,6 +17,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache
 import multiprocessing as mp
+from .constraints import has_duplicate_assignments, is_wish_violation
 
 
 # ==================== OPTIMIZED CHROMOSOME ====================
@@ -82,7 +83,7 @@ class OptimizedChromosome:
             teacher_counts[teacher_indices] += 1
             
             # Duplicate check
-            if len(set(teacher_indices)) != len(teacher_indices):
+            if has_duplicate_assignments(teacher_indices):
                 base_score -= 500
                 violations.append({'type': 'duplicate', 'session': sid, 'severity': 'critical'})
             
@@ -115,8 +116,7 @@ class OptimizedChromosome:
         for sid, teacher_indices in self.genes.items():
             day_idx, seance = session_day_slot[sid]
             for t_idx in teacher_indices:
-                forbidden = self.teachers[t_idx]['wishes'].get(day_idx, [])
-                if seance in forbidden:
+                if is_wish_violation(self.teachers[t_idx], day_idx, seance):
                     wish_violations += 1
                     submission_idx = self.teachers[t_idx].get('wish_submission_index', max_submission_index)
                     if submission_idx is None:

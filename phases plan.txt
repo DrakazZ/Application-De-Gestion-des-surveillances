@@ -1,0 +1,209 @@
+PHASE 1 — CORRECTNESS FIXES
+1.1 GA fitness must use genes (not metadata) for assigned count
+1.2 Grade balancing must use teacher indices (not dicts)
+1.3 Wishes file must be optional (graceful fallback)
+1.4 No duplicate Qt signal connections
+1.5 Dead UI code removed (on_generation_complete)
+
+PHASE 2 — CALENDAR INPUT CONTRACT
+- Either CV parser with strict validation
+- OR structured Excel format
+- Must have enforced schema validation (Date, Time_Start, Time_End, etc.)
+- No silent failures allowed
+
+PHASE 3 — CAPACITY NORMALIZATION
+- Explicit normalization step before solver
+- Must compute total capacity vs required staff
+- Must support STRICT vs RELAXED mode
+- Must adjust per-grade limits systematically
+
+PHASE 4 — UNIFIED DATA MODEL
+- Introduction of dataclasses (Teacher, Session)
+- Gradual migration from dict-based structures
+
+PHASE 5 — UNIFIED CONSTRAINT SYSTEM (CRITICAL)
+- Single source of truth for:
+    - capacity constraint
+    - wish constraint
+    - conflict logic
+- Greedy and GA MUST use same constraint logic
+- No duplicated logic across files
+
+PHASE 6 — WORKER/UI SEPARATION
+- No UI calls in worker threads
+- Workers return data only
+
+PHASE 7 — DEAD CODE REMOVAL
+- No unused functions or broken paths
+- No invalid references
+
+PHASE 8 — RESULT BUILDER
+- Export logic separated from UI
+- Clean DataFrame builder function
+
+PHASE 9 — CONFIG CENTRALIZATION
+- All constants defined in one config file
+- No magic numbers in logic
+
+
+Phase 1 — Correctness fixes
+
+Status: Mostly done, but contaminated
+
+1.1 GA fitness understaffing
+
+You fixed it:
+
+assigned = len(self.genes[sid])
+
+No double counting. Good.
+
+But then you added:
+
+weighted wish penalties
+scaling logic
+
+That’s not correctness, that’s behavior change.
+Phase 1 is supposed to be sterile. You mixed Phase 3 into it.
+
+Verdict:
+✔ core bug fixed
+✘ phase discipline broken
+
+1.2 Grade balancing transfer
+
+You fixed the index vs dict issue.
+You even added rollback validation. That’s actually better than the original plan.
+
+Verdict:
+✔ correct
+✔ safer than required
+
+1.3 Wishes contract
+
+Handled:
+
+optional file
+empty fallback
+schema normalization
+
+Also added submission index logic (FIFO). That’s beyond spec but consistent.
+
+Verdict:
+✔ correct
+✔ extended properly
+
+1.4 Duplicate signal
+
+Assumed fixed. No evidence otherwise.
+
+1.5 Dead code removal
+
+If you actually removed on_generation_complete, fine. If not, it’s still sitting there waiting to betray you later.
+
+Phase 1 overall
+
+You passed correctness, but polluted it with optimization logic.
+Not fatal, but it explains your instability.
+
+Phase 2 — Calendar input format
+
+Status: Undefined / ignored
+
+You never committed to:
+
+CV + validation
+OR
+structured Excel
+
+Instead you:
+
+changed downstream logic (sessions, normalization)
+but didn’t lock the input contract
+
+That means:
+everything downstream is built on a shifting assumption.
+
+Verdict:
+✘ not done
+✘ hidden risk multiplier
+
+Phase 3 — Capacity normalization
+
+Status: Partially implemented differently
+
+You already have:
+
+compute_adaptive_grade_limits(...)
+
+That function is basically your version of Phase 3.
+
+Difference:
+
+Plan: explicit normalization module with strict/relaxed mode
+You: implicit adjustment inside builder
+
+Functionally similar, but:
+
+Missing:
+
+explicit constraint_mode (STRICT vs RELAXED)
+unified enforcement in GA + greedy
+
+Verdict:
+✔ concept implemented
+✘ architecture not aligned with plan
+
+Phase 4 — Unified data model
+
+Status: Not started
+
+Still using dicts everywhere.
+
+Not a problem yet. Just don’t pretend you did it.
+
+Phase 5 — Unified constraint module
+
+Status: Not done
+
+Right now:
+
+Greedy uses:
+is_available
+candidate pools
+manual checks
+GA uses:
+inline penalties in _evaluate_fitness
+
+They are not sharing logic.
+
+That means:
+you are solving two different problems simultaneously.
+
+This is the real “split brain,” not the one you were worried about.
+
+Verdict:
+✘ critical missing piece
+
+Phase 6 — Worker/UI boundary
+
+Status: unknown, likely unchanged
+Not impacting core solver yet.
+
+Phase 7 — Dead code cleanup
+
+Partially addressed earlier. Not critical now.
+
+Phase 8 — Result builder
+
+Not done. Still UI-mixed logic probably.
+
+Phase 9 — Config centralization
+
+Status: definitely not done
+
+You still have:
+
+magic numbers in fitness
+weights scattered
+no single source of truth

@@ -14,7 +14,6 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from core import (
-    CalendarParser,
     preprocess_exam_info,
     preprocess_professors,
     solve_hybrid,
@@ -57,37 +56,27 @@ class SchedulerWorker(QThread):
     def _execute_pipeline(self):
         """Execute full scheduling pipeline with progress updates"""
         
-        # ========== STEP 1: Parse Calendar ==========
-        self.stage_update.emit("📅 Parsing Calendar...")
-        self.progress_update.emit("Extracting exam sessions from PDF", 10)
+        # ========== STEP 1: Preprocess Exam Info ==========
+        self.stage_update.emit("📊 Processing Exam Data...")
+        self.progress_update.emit("Loading room assignments", 10)
         self.msleep(50)
         
-        parser = CalendarParser(
-            pdf_path=self.files['calendrier'],
-            output_dir=self.output_dir
+        profs_by_session, rooms_by_session, sessions_df = preprocess_exam_info(
+            self.files['salles'],
         )
-        df_calendar = parser.parse_calendar()
+
+        df_calendar = sessions_df.rename(columns={"date": "Date", "slot": "Slot"})
+        if not df_calendar.empty:
+            df_calendar = df_calendar[["Date", "Slot"]]
         
         if self.is_cancelled:
             return None
-        
+
         self.progress_update.emit(
             f"Found {len(df_calendar)} exam sessions",
             20
         )
         self.msleep(50)
-        
-        # ========== STEP 2: Preprocess Exam Info ==========
-        self.stage_update.emit("📊 Processing Exam Data...")
-        self.progress_update.emit("Loading room assignments", 30)
-        self.msleep(50)
-        
-        profs_by_session, rooms_by_session = preprocess_exam_info(
-            self.files['salles'],
-        )
-        
-        if self.is_cancelled:
-            return None
         
         # ========== STEP 3: Load Professors ==========
         self.stage_update.emit("👥 Loading Professors...")
@@ -115,6 +104,8 @@ class SchedulerWorker(QThread):
             min_per_room=2,
             padding_percentage=0.10,
             default_max_sessions=self.config.get('max_sessions', 7),
+            hard_upper_cap=15,
+            capacity_mode=self.config.get('capacity_mode', 'relaxed'),
             respect_wishes=True,
             prefer_responsible=True,
             balance_grades=True,
@@ -215,10 +206,6 @@ class ValidationWorker(QThread):
         warnings = []
         
         try:
-            # Check calendar PDF exists
-            if not os.path.exists(self.files['calendrier']):
-                errors.append("Calendar PDF not found")
-            
             # Check professors Excel
             if not os.path.exists(self.files['professeurs']):
                 errors.append("Professors Excel not found")

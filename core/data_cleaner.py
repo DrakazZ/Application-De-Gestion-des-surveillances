@@ -30,29 +30,51 @@ def preprocess_exam_info(salle_date_excel_path: str):
     tuple[dict, dict, pd.DataFrame]
         - profs_by_session: dict mapping "date+time" -> set of professor IDs
         - rooms_by_session: dict mapping "date+time" -> number of rooms used
-        - cleaned DataFrame (df_info)
+        - sessions_df: DataFrame of structured sessions
     """
 
     # ✅ Load the Excel file into a DataFrame
     df_info = pd.read_excel(salle_date_excel_path)
+    df_info.columns = [
+        unidecode.unidecode(col.strip().lower())
+        for col in df_info.columns
+    ]
+
+    COLUMN_MAP = {
+        "h_debut": ["h_debut"],
+        "h_fin": ["h_fin"],
+        "dateexam": ["dateexam"],
+        "enseignant": ["enseignant"],
+    }
+
+    def resolve_column(df, candidates):
+        for candidate in candidates:
+            if candidate in df.columns:
+                return candidate
+        raise ValueError(f"Missing required column: {candidates}")
+
+    col_h_debut = resolve_column(df_info, COLUMN_MAP["h_debut"])
+    col_h_fin = resolve_column(df_info, COLUMN_MAP["h_fin"])
+    col_date = resolve_column(df_info, COLUMN_MAP["dateexam"])
+    col_prof = resolve_column(df_info, COLUMN_MAP["enseignant"])
 
     # ✅ Clean time columns — remove fake date part, keep only HH:MM
-    df_info["h_debut"] = (
-        df_info["h_debut"]
+    df_info[col_h_debut] = (
+        df_info[col_h_debut]
         .astype(str)
         .str.extract(r"(\d{2}:\d{2})")[0]
         .fillna("00:00")
     )
-    df_info["h_fin"] = (
-        df_info["h_fin"]
+    df_info[col_h_fin] = (
+        df_info[col_h_fin]
         .astype(str)
         .str.extract(r"(\d{2}:\d{2})")[0]
         .fillna("00:00")
     )
 
     # ✅ Clean date column — keep only DD/MM
-    df_info["dateExam"] = (
-        df_info["dateExam"]
+    df_info[col_date] = (
+        df_info[col_date]
         .astype(str)
         .str.extract(r"(\d{2}/\d{2})")[0]
         .fillna("00/00")
@@ -61,12 +83,18 @@ def preprocess_exam_info(salle_date_excel_path: str):
     # ✅ Prepare containers
     profs_by_session = defaultdict(set)
     rooms_by_session = defaultdict(int)
+    slot_map = {
+        "08:30": "s1",
+        "10:30": "s2",
+        "12:30": "s3",
+        "14:30": "s4",
+    }
 
     # ✅ Process each row
     for _, row in df_info.iterrows():
         # Unique session key (date + start time)
-        key = f"{row['dateExam']} {row['h_debut']}"
-        prof_id = str(row["enseignant"]).strip()
+        key = f"{row[col_date]} {row[col_h_debut]}"
+        prof_id = str(row[col_prof]).strip()
 
         # Add professor ID if valid
         if prof_id not in ("0", "", "nan") and prof_id.lower() != "nan":
@@ -84,8 +112,28 @@ def preprocess_exam_info(salle_date_excel_path: str):
     for k, v in rooms_by_session.items():
         print(f"{k:<15} → {v} rooms")
 
+    sessions = []
+    for idx, (key, profs) in enumerate(profs_by_session.items()):
+        date, time = key.split()
+        rooms = rooms_by_session.get(key, 1)
+        required_staff = rooms * 2
+        if time not in slot_map:
+            print(f"[WARNING] Unknown time slot: {time}")
+        sessions.append({
+            "id": idx,
+            "key": key,
+            "date": date,
+            "time": time,
+            "slot": slot_map.get(time, "unknown"),
+            "rooms_count": rooms,
+            "required_staff": required_staff,
+            "responsible_teachers": list(profs)
+        })
+
+    sessions_df = pd.DataFrame(sessions)
+
     # ✅ Return results
-    return profs_by_session, rooms_by_session
+    return profs_by_session, rooms_by_session, sessions_df
 
 
 def preprocess_professors(professors_excel_path: str, wishes_excel_path: str) -> pd.DataFrame:

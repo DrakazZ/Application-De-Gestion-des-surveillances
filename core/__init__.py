@@ -33,8 +33,25 @@ from .data_cleaner import (
     preprocess_professors
 )
 
+from .models import (
+    Teacher,
+    Session,
+    teacher_from_dict,
+    teacher_to_dict,
+    session_from_dict,
+    session_to_dict
+)
+
 from .calendar_parser import (
     CalendarParser
+)
+
+from .constraints import (
+    has_duplicate_assignments,
+    understaffed_deficit,
+    capacity_excess,
+    is_wish_violation,
+    count_wish_violations
 )
 
 __all__ = [
@@ -59,7 +76,22 @@ __all__ = [
     # Data processing
     'preprocess_exam_info',
     'preprocess_professors',
-    'CalendarParser'
+    'CalendarParser',
+
+    # Models
+    'Teacher',
+    'Session',
+    'teacher_from_dict',
+    'teacher_to_dict',
+    'session_from_dict',
+    'session_to_dict',
+
+    # Constraints
+    'has_duplicate_assignments',
+    'understaffed_deficit',
+    'capacity_excess',
+    'is_wish_violation',
+    'count_wish_violations'
 ]
 
 __version__ = '1.0.0'

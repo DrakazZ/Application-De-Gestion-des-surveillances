@@ -2,6 +2,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from .constraints import is_wish_violation
 # ==================== CONFIGURATION ====================
 
 @dataclass
@@ -13,7 +14,8 @@ class SchedulerConfig:
         5: 2, 25: 4, 40: 6, float('inf'): 7
     })
     default_max_sessions: int = 7
-    hard_upper_cap: int = 20
+    hard_upper_cap: int = 15
+    capacity_mode: str = "relaxed"
     respect_wishes: bool = True
     prefer_responsible: bool = True
     balance_grades: bool = True
@@ -168,7 +170,8 @@ def compute_adaptive_grade_limits(
     total_base_needed,
     user_limits=None,
     default_max=6,
-    hard_upper_cap=20
+    hard_upper_cap=15,
+    capacity_mode="relaxed"
 ):
     """
     Compute per-grade max_sessions so total capacity >= total_base_needed.
@@ -180,52 +183,117 @@ def compute_adaptive_grade_limits(
         user_limits = {}
 
     # Initial limits
-    limits = {}
+    base_limits = {}
     for grade, idxs in teachers_by_grade.items():
-        limits[grade] = int(user_limits.get(grade, default_max))
+        base_limits[grade] = int(user_limits.get(grade, default_max))
+    limits = dict(base_limits)
 
     # Helper: compute current total capacity
     def capacity_from_limits(lims):
         return sum(len(teachers_by_grade[g]) * lim for g, lim in lims.items())
 
     cap = capacity_from_limits(limits)
-    log = [{"action": "initial", "capacity": cap, "required": total_base_needed}]
+    mode = str(capacity_mode or "relaxed").lower()
+    log = [{"action": "initial", "capacity": cap, "required": total_base_needed, "mode": mode}]
 
     # If capacity is enough already
     if cap >= total_base_needed:
         log.append({"action": "ok", "capacity": cap, "required": total_base_needed})
         return limits, log
 
-    # Otherwise try to adapt
-    grades = list(limits.keys())
-    iterations = 0
-    max_iterations = 10000
-    
-    while cap < total_base_needed and iterations < max_iterations:
-        grades.sort(key=lambda g: (limits[g], len(teachers_by_grade.get(g, []))))
-        increased = False
-        
-        for g in grades:
-            if limits[g] >= hard_upper_cap:
+    if mode == "strict":
+        log.append({
+            "action": "failed_to_cover",
+            "capacity": cap,
+            "required": total_base_needed,
+            "note": "Strict mode: capacity below required"
+        })
+        return limits, log
+
+    total_professors = sum(len(teachers_by_grade.get(g, [])) for g in limits)
+    if total_professors <= 0:
+        log.append({
+            "action": "failed_to_cover",
+            "capacity": cap,
+            "required": total_base_needed,
+            "note": "No professors available to increase capacity"
+        })
+        return limits, log
+
+    deficit = total_base_needed - cap
+    added_capacity = deficit // total_professors
+    if added_capacity > 0:
+        for grade in limits:
+            if limits[grade] >= hard_upper_cap:
                 continue
-            limits[g] += 1
-            added = len(teachers_by_grade.get(g, []))
-            cap = capacity_from_limits(limits)
+            new_limit = min(hard_upper_cap, limits[grade] + added_capacity)
+            if new_limit != limits[grade]:
+                limits[grade] = new_limit
+                log.append({
+                    "action": "bulk_increase",
+                    "grade": grade,
+                    "new_limit": new_limit
+                })
+        cap = capacity_from_limits(limits)
+
+    needed = total_base_needed - cap
+    grade_order = sorted(limits.keys(), key=lambda g: len(teachers_by_grade.get(g, [])))
+
+    def average_ratio(lims):
+        ratios = []
+        for grade in lims:
+            base = base_limits.get(grade, 1) or 1
+            ratios.append(lims[grade] / base)
+        return sum(ratios) / len(ratios) if ratios else 0
+
+    while needed > 0:
+        avg_ratio = average_ratio(limits)
+        increased = False
+
+        for grade in grade_order:
+            if limits[grade] >= hard_upper_cap:
+                continue
+            base = base_limits.get(grade, 1) or 1
+            if limits[grade] / base < avg_ratio:
+                limits[grade] += 1
+                cap += len(teachers_by_grade.get(grade, []))
+                needed -= len(teachers_by_grade.get(grade, []))
+                log.append({
+                    "action": "increase",
+                    "grade": grade,
+                    "new_limit": limits[grade],
+                    "total_capacity": cap
+                })
+                increased = True
+                if needed <= 0:
+                    break
+
+        if needed <= 0:
+            break
+
+        if not increased:
+            avg_ratio = average_ratio(limits)
+            candidates = [
+                g for g in limits
+                if limits[g] < hard_upper_cap
+                and (limits[g] / (base_limits.get(g, 1) or 1)) < avg_ratio
+            ]
+            if not candidates:
+                candidates = [g for g in limits if limits[g] < hard_upper_cap]
+            if not candidates:
+                break
+            grade = max(candidates, key=lambda g: len(teachers_by_grade.get(g, [])))
+            limits[grade] += 1
+            cap += len(teachers_by_grade.get(grade, []))
+            needed -= len(teachers_by_grade.get(grade, []))
             log.append({
                 "action": "increase",
-                "grade": g,
-                "new_limit": limits[g],
-                "capacity_added": added,
+                "grade": grade,
+                "new_limit": limits[grade],
                 "total_capacity": cap
             })
-            increased = True
-            if cap >= total_base_needed:
-                break
-        
-        if not increased:
-            break
-        iterations += 1
 
+    # Otherwise try to adapt
     # Final note if not possible
     if cap < total_base_needed:
         log.append({
@@ -322,13 +390,20 @@ def build_canonical_structures(
 
     # ========== Compute required totals ==========
     total_base_needed = sum(s['base_required_staff'] for s in sessions)
+    total_required_needed = sum(s['total_required_staff'] for s in sessions)
 
     # Preview before solving
-    preview_capacity = sum(
-        len(v) * config.default_max_sessions 
-        for v in teachers_by_grade.values()
-    )
-    print(f"Total required staff: {total_base_needed}")
+    if provided_ui_grade_limits:
+        preview_capacity = sum(
+            len(v) * int(provided_ui_grade_limits.get(g, config.default_max_sessions))
+            for g, v in teachers_by_grade.items()
+        )
+    else:
+        preview_capacity = sum(
+            len(v) * config.default_max_sessions
+            for v in teachers_by_grade.values()
+        )
+    print(f"Total required staff: {total_required_needed}")
     print(f"Total current capacity (default={config.default_max_sessions}): {preview_capacity}")
 
     if provided_ui_grade_limits:
@@ -337,10 +412,11 @@ def build_canonical_structures(
     # Compute adaptive limits
     adjusted_limits, adjustment_log = compute_adaptive_grade_limits(
         teachers_by_grade=teachers_by_grade,
-        total_base_needed=total_base_needed,
+        total_base_needed=total_required_needed,
         user_limits=provided_ui_grade_limits,
         default_max=config.default_max_sessions,
-        hard_upper_cap=config.hard_upper_cap
+        hard_upper_cap=config.hard_upper_cap,
+        capacity_mode=config.capacity_mode
     )
 
     # Apply adaptive limits per teacher
@@ -377,8 +453,7 @@ def _date_to_weekday(date_str: str) -> int:
 def is_available(teacher, session_id, helpers):
     """Check if teacher is available for session (no wish conflict)"""
     day_idx, seance = helpers['session_day_slot'][session_id]
-    forbidden = teacher['wishes'].get(day_idx, [])
-    return seance not in forbidden
+    return not is_wish_violation(teacher, day_idx, seance)
 
 
 def compute_session_difficulty(session, teachers, helpers):
