@@ -7,11 +7,7 @@ from PyQt5.QtCore import Qt
 from ui.styles.style import get_global_stylesheet, apply_shadow_effect
 from ui.home_page import HomePage
 from ui.lang.language_manager import LanguageManager
-from ui.modify_page import ModifyPage
-from workers.db_handler import DBHandler
 from helper.resource_path import resource_path
-import os
-import sys
 
 
 class MainWindow(QMainWindow):
@@ -38,13 +34,8 @@ class MainWindow(QMainWindow):
 
         # === Pages ===
         self.home_page = HomePage()
-        self.modify_page = ModifyPage()
-
-        # CONNECT IMPORTED SIGNAL FROM MODIFY PAGE TO EXPORT PANEL IN HOME PAGE
-        self.modify_page.imported.connect(self.on_modify_imported)
 
         self.stack.addWidget(self.home_page)
-        self.stack.addWidget(self.modify_page)
 
         # Navigation defaults
         self.btn_home.setChecked(True)
@@ -68,8 +59,7 @@ class MainWindow(QMainWindow):
 
         # Nav buttons
         self.btn_home = QPushButton("Accueil")
-        self.btn_modify = QPushButton("Modifier")
-        for btn in [self.btn_home, self.btn_modify]:
+        for btn in [self.btn_home]:
             btn.setObjectName("navButton")
             btn.setCheckable(True)
             btn.setStyleSheet("border-radius: 4px;")
@@ -77,7 +67,6 @@ class MainWindow(QMainWindow):
             layout.addWidget(btn)
 
         self.btn_home.clicked.connect(lambda: self.switch_page(0))
-        self.btn_modify.clicked.connect(lambda: self.switch_page(1))
         layout.addStretch()
 
         # Language selector
@@ -97,30 +86,10 @@ class MainWindow(QMainWindow):
     def switch_page(self, index):
         self.stack.setCurrentIndex(index)
         self.btn_home.setChecked(index == 0)
-        self.btn_modify.setChecked(index == 1)
 
     # ---------------------- #
     #   SIGNALS HANDLERS     #
     # ---------------------- #
-    def on_generation_complete(self, result):
-        """Called when HomePage finishes generating schedule"""
-        excel_path = result['output_prefix'] + "_assignment.xlsx"
-        if os.path.exists(excel_path):
-            self.db_handler = DBHandler(excel_path)
-            if self.modify_page is None:
-                self.modify_page = ModifyPage(self.db_handler)
-                self.stack.addWidget(self.modify_page)
-            self.btn_modify.setEnabled(True)
-        else:
-            print(f"[Warning] Excel not found: {excel_path}")
-
-
     def on_language_changed(self, lang):
         self.lang_manager.set_language(lang)
-
-    def on_modify_imported(self, df):
-        """Receive imported DataFrame from ModifyPage and send it to ExportPanel"""
-        result = {'final_df': df}  # match the format ExportPanel expects
-        self.home_page.ExportPanel.set_result(result)
-        self.switch_page(0)  # show HomePage automatically
 

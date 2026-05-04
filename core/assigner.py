@@ -945,15 +945,15 @@ def solve_schedule(
     errors, warnings = validate_assignment(assignment, sessions, teachers)
     
     if errors:
-        print("\n⚠️  VALIDATION ERRORS FOUND:")
+        print("\nWARNING: VALIDATION ERRORS FOUND:")
         for error in errors:
-            print(f"  ❌ {error}")
+            print(f"  ERROR: {error}")
         raise ValueError("Assignment validation failed. See errors above.")
     
     if warnings:
-        print("\n⚠️  VALIDATION WARNINGS:")
+        print("\nWARNING: VALIDATION WARNINGS:")
         for warning in warnings:
-            print(f"  ⚠️  {warning}")
+            print(f"  WARNING: {warning}")
     
     print("\nGenerating report...")
     report = generate_assignment_report(assignment, sessions, teachers, violations)

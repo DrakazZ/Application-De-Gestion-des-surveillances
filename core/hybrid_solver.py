@@ -95,7 +95,7 @@ def solve_hybrid(
     if progress_callback:
         progress_callback('greedy', {'stage': 'starting', 'progress': 0})
     
-    print("\n📊 PHASE 1: GREEDY INITIALIZATION")
+    print("\nPHASE 1: GREEDY INITIALIZATION")
     print("-" * 70)
     
     greedy_start = time.time()
@@ -114,7 +114,7 @@ def solve_hybrid(
         greedy_assignment, sessions, teachers, helpers
     )
     
-    print(f"\n✓ Greedy phase completed in {greedy_time:.2f}s")
+    print(f"\nGreedy phase completed in {greedy_time:.2f}s")
     print(f"  Initial fitness: {greedy_chromosome.fitness_score:.2f}")
     print(f"  Initial violations: {len(greedy_chromosome.violations)}")
     
@@ -130,7 +130,7 @@ def solve_hybrid(
     # If GA disabled, return greedy solution
     if not config.use_ga:
         total_time = time.time() - start_time
-        print(f"\n✓ Total execution time: {total_time:.2f}s")
+        print(f"\nTotal execution time: {total_time:.2f}s")
         
         return {
             'final_assignment': greedy_assignment,
@@ -150,7 +150,7 @@ def solve_hybrid(
     if progress_callback:
         progress_callback('ga', {'stage': 'starting', 'progress': 0, 'generation': 0})
     
-    print("\n🧬 PHASE 2: GENETIC ALGORITHM OPTIMIZATION")
+    print("\nPHASE 2: GENETIC ALGORITHM OPTIMIZATION")
     print("-" * 70)
     
     ga_start = time.time()
@@ -195,7 +195,7 @@ def solve_hybrid(
     
     # ========== PHASE 3: COMPARISON & VALIDATION ==========
     
-    print("\n📈 PHASE 3: RESULTS COMPARISON")
+    print("\nPHASE 3: RESULTS COMPARISON")
     print("-" * 70)
     
     comparison = compare_solutions(greedy_chromosome, best_chromosome)
@@ -214,20 +214,20 @@ def solve_hybrid(
         ))
     
     # Validate final solution
-    print("\n🔍 Validating final solution...")
+    print("\nValidating final solution...")
     errors, warnings = validate_assignment(best_chromosome.genes, sessions, teachers)
     
     if errors:
-        print("⚠️  ERRORS FOUND:")
+        print("ERRORS FOUND:")
         for error in errors:
-            print(f"  ❌ {error}")
+            print(f"  ERROR: {error}")
     else:
-        print("✓ No errors found")
+        print("No errors found")
     
     if warnings:
-        print("⚠️  WARNINGS:")
+        print("WARNINGS:")
         for warning in warnings:
-            print(f"  ⚠️  {warning}")
+            print(f"  WARNING: {warning}")
     
     # ========== FINAL SUMMARY ==========
     
@@ -262,88 +262,3 @@ def solve_hybrid(
     }
 
 
-# ==================== CONVENIENCE FUNCTIONS ====================
-
-def quick_solve(df_calendar, df_profs, profs_by_session, rooms_by_session,
-                use_ga=True, generations=100):
-    """
-    Quick solve with default settings.
-    
-    Args:
-        use_ga: Whether to use genetic algorithm (True) or greedy only (False)
-        generations: Number of GA generations if use_ga=True
-    """
-    config = HybridConfig(
-        use_ga=use_ga,
-        generations=generations,
-        verbose=True
-    )
-    
-    return solve_hybrid(
-        df_calendar, df_profs, profs_by_session, rooms_by_session,
-        config=config
-    )
-
-
-def export_results(result: Dict, output_prefix: str = "schedule"):
-    """
-    Export results to files.
-    
-    Generates:
-    - {prefix}_assignment.xlsx: Final schedule
-    - {prefix}_comparison.csv: Greedy vs GA comparison
-    - {prefix}_report.txt: Detailed text report
-    """
-    import pandas as pd
-    
-    # 1. Export final assignment
-    rows = []
-    for s in result['sessions']:
-        sid = s['id']
-        teachers_assigned = [
-            result['teachers'][t_idx]['name'] 
-            for t_idx in result['final_assignment'][sid]
-        ]
-        rows.append({
-            'Date': s['date'],
-            'Time': s['time'],
-            'Required Staff': s['total_required_staff'],
-            'Assigned Staff': len(result['final_assignment'][sid]),
-            'Teachers': ', '.join(teachers_assigned),
-            'Status': 'OK' if len(result['final_assignment'][sid]) >= s['total_required_staff'] else 'UNDERSTAFFED'
-        })
-    
-    df = pd.DataFrame(rows)
-    df.to_excel(f'{output_prefix}_assignment.xlsx', index=False)
-    print(f"✓ Exported assignment to {output_prefix}_assignment.xlsx")
-    
-    # 2. Export comparison if GA was used
-    if result['comparison']:
-        comp_df = pd.DataFrame(result['comparison'])
-        comp_df.to_csv(f'{output_prefix}_comparison.csv', index=False)
-        print(f"✓ Exported comparison to {output_prefix}_comparison.csv")
-    
-    # 3. Export detailed report
-    with open(f'{output_prefix}_report.txt', 'w') as f:
-        f.write("="*70 + "\n")
-        f.write(" "*20 + "SCHEDULING REPORT\n")
-        f.write("="*70 + "\n\n")
-        
-        f.write(f"Mode: {result['mode']}\n")
-        f.write(f"Total execution time: {result['execution_time']:.2f}s\n\n")
-        
-        if result['mode'] == 'hybrid':
-            f.write(f"Greedy time: {result['greedy_time']:.2f}s\n")
-            f.write(f"GA time: {result['ga_time']:.2f}s\n\n")
-        
-        f.write(f"Total sessions: {len(result['sessions'])}\n")
-        f.write(f"Total teachers: {len(result['teachers'])}\n")
-        f.write(f"Total assignments: {sum(len(v) for v in result['final_assignment'].values())}\n\n")
-        
-        f.write("Final Solution:\n")
-        f.write(f"  Fitness: {result['final_chromosome'].fitness_score:.2f}\n")
-        f.write(f"  Violations: {len(result['final_chromosome'].violations)}\n")
-        f.write(f"  Wish violations: {result['final_chromosome'].stats['wish_violations']}\n")
-        f.write(f"  Workload variance: {result['final_chromosome'].stats['workload_variance']:.2f}\n")
-    
-    print(f"✓ Exported report to {output_prefix}_report.txt")

@@ -334,7 +334,7 @@ class DocumentExporter:
                 msg = QMessageBox()
                 msg.setIcon(QMessageBox.Information)
                 msg.setWindowTitle("Export Status")
-                msg.setText("✅ Using DataFrame from DBHandler (overriding provided data).")
+                msg.setText("Using DataFrame from DBHandler (overriding provided data).")
                 msg.exec_()
                 df_assignments = db.df
             else:

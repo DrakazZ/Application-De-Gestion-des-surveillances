@@ -4,6 +4,7 @@ Communicates with UI via Qt signals
 """
 from PyQt5.QtWidgets import QInputDialog
 from PyQt5.QtCore import QThread, pyqtSignal
+import pandas as pd
 import traceback
 import time
 import os
@@ -14,13 +15,11 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from core import (
-    CalendarParser,
     preprocess_exam_info,
     preprocess_professors,
     solve_hybrid,
     HybridConfig,
-    SchedulerConfig,
-    export_results
+    SchedulerConfig
 )
 
 
@@ -57,16 +56,30 @@ class SchedulerWorker(QThread):
     def _execute_pipeline(self):
         """Execute full scheduling pipeline with progress updates"""
         
-        # ========== STEP 1: Parse Calendar ==========
-        self.stage_update.emit("📅 Parsing Calendar...")
-        self.progress_update.emit("Extracting exam sessions from PDF", 10)
+        # ========== STEP 1: Process Exam Data ==========
+        self.stage_update.emit("Processing Exam Data...")
+        self.progress_update.emit("Loading room assignments", 10)
         self.msleep(50)
         
-        parser = CalendarParser(
-            pdf_path=self.files['calendrier'],
-            output_dir=self.output_dir
+        profs_by_session, rooms_by_session, df_info = preprocess_exam_info(
+            self.files['salles'],
         )
-        df_calendar = parser.parse_calendar()
+
+        if df_info is None or df_info.empty:
+            df_calendar = pd.DataFrame(columns=[
+                "Date", "Time_Start", "Time_End", "Subject", "Class"
+            ])
+        else:
+            df_calendar = pd.DataFrame({
+                "Date": df_info["dateExam"],
+                "Time_Start": df_info["h_debut"],
+                "Time_End": df_info["h_fin"],
+                "Subject": [""] * len(df_info),
+                "Class": [""] * len(df_info)
+            })
+            df_calendar = df_calendar.sort_values(
+                by=["Date", "Time_Start", "Class"]
+            ).reset_index(drop=True)
         
         if self.is_cancelled:
             return None
@@ -76,21 +89,9 @@ class SchedulerWorker(QThread):
             20
         )
         self.msleep(50)
-        
-        # ========== STEP 2: Preprocess Exam Info ==========
-        self.stage_update.emit("📊 Processing Exam Data...")
-        self.progress_update.emit("Loading room assignments", 30)
-        self.msleep(50)
-        
-        profs_by_session, rooms_by_session = preprocess_exam_info(
-            self.files['salles'],
-        )
-        
-        if self.is_cancelled:
-            return None
-        
-        # ========== STEP 3: Load Professors ==========
-        self.stage_update.emit("👥 Loading Professors...")
+
+        # ========== STEP 2: Load Professors ==========
+        self.stage_update.emit("Loading Professors...")
         self.progress_update.emit("Reading professor data and wishes", 40)
         self.msleep(50)
         
@@ -109,7 +110,7 @@ class SchedulerWorker(QThread):
         self.msleep(50)
         
         # ========== STEP 4: Configure Solver ==========
-        self.stage_update.emit("⚙️ Configuring Solver...")
+        self.stage_update.emit("Configuring Solver...")
         
         greedy_config = SchedulerConfig(
             min_per_room=2,
@@ -135,7 +136,7 @@ class SchedulerWorker(QThread):
         )
         
         # ========== STEP 5: Run Solver ==========
-        self.stage_update.emit("🚀 Running Algorithm...")
+        self.stage_update.emit("Running Algorithm...")
         self.progress_update.emit("Generating schedule (this may take a while)", 60)
         self.msleep(50)
 
@@ -172,18 +173,6 @@ class SchedulerWorker(QThread):
         if self.is_cancelled:
             return None
         
-        # ========== STEP 6: Export Results ==========
-        """self.stage_update.emit("💾 Exporting Results...")
-        self.progress_update.emit("Saving output files", 90)
-        
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_prefix = os.path.join(self.output_dir, f"schedule_{timestamp}")
-        
-        export_results(result, output_prefix)
-        
-        self.progress_update.emit("Complete!", 100)
-        self.msleep(50)"""
-        
         # Return result with file paths
         return {
             'result': result,
@@ -215,30 +204,62 @@ class ValidationWorker(QThread):
         warnings = []
         
         try:
-            # Check calendar PDF exists
-            if not os.path.exists(self.files['calendrier']):
-                errors.append("Calendar PDF not found")
-            
             # Check professors Excel
             if not os.path.exists(self.files['professeurs']):
                 errors.append("Professors Excel not found")
             else:
                 try:
                     df = pd.read_excel(self.files['professeurs'])
-                    required_cols = ['nom_ens', 'prenom_ens', 'grade_code_ens']
+                    required_cols = [
+                        'nom_ens',
+                        'prenom_ens',
+                        'grade_code_ens',
+                        'code_smartex_ens',
+                        'participe_surveillance'
+                    ]
                     missing = [c for c in required_cols if c not in df.columns]
                     if missing:
                         errors.append(f"Professors file missing columns: {missing}")
+                        raise ValueError("Missing required columns")
                     
                     for idx, row in df.iterrows():
+                        participe = str(row.get('participe_surveillance', '')).strip().lower() == 'true'
                         missing_cols = [c for c in required_cols if pd.isnull(row[c]) or str(row[c]).strip() == ""]
                         if missing_cols:
                             for col in missing_cols:
+                                if col == 'code_smartex_ens' and not participe:
+                                    continue
                                 current_info = row.to_dict()
                                 prompt = f"Missing value for column '{col}' in row:\n{current_info}\n\nPlease enter a value:"
                                 value, ok = QInputDialog.getText(self, "Missing Data", prompt)
                                 if ok and value.strip():
                                     df.at[idx, col] = value.strip()  
+                                else:
+                                    errors.append(f"Missing value for {col} in row {idx}")
+                                    break
+                        if 'code_smartex_ens' in df.columns and participe:
+                            code_value = str(df.at[idx, 'code_smartex_ens']).strip()
+                            if code_value.lower() in ('', 'nan', 'none'):
+                                current_info = row.to_dict()
+                                prompt = (
+                                    "Missing value for column 'code_smartex_ens' in row:\n"
+                                    f"{current_info}\n\nPlease enter a value:"
+                                )
+                                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
+                                if ok and value.strip():
+                                    df.at[idx, 'code_smartex_ens'] = value.strip()
+                                else:
+                                    errors.append(f"Missing value for code_smartex_ens in row {idx}")
+                                    break
+
+                    participe_mask = df['participe_surveillance'].astype(str).str.lower().str.strip() == 'true'
+                    codes = df.loc[participe_mask, 'code_smartex_ens']
+                    code_str = codes.astype(str).str.strip()
+                    valid_mask = ~code_str.isin(['', 'nan', 'none'])
+                    dup_mask = code_str[valid_mask].duplicated(keep=False)
+                    if dup_mask.any():
+                        dup_values = code_str[valid_mask][dup_mask].unique().tolist()
+                        errors.append(f"Duplicate teacher IDs found: {dup_values}")
                     df.to_excel(self.files['professeurs'], index=False)  
                 except Exception as e:
                     errors.append(f"Cannot read professors file: {e}")
@@ -249,7 +270,7 @@ class ValidationWorker(QThread):
             else:
                 try:
                     df = pd.read_excel(self.files['souhaits'])
-                    required_cols = ["enseignant_uuid.nom_ens", "enseignant_uuid.prenom_ens", "jour", "seance"]
+                    required_cols = ["Enseignant", "Jour", "Séances"]
                     missing = [c for c in required_cols if c not in df.columns]
                     if missing:
                         errors.append(f"Wishes file missing columns: {missing}")

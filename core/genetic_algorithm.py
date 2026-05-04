@@ -76,7 +76,7 @@ class OptimizedChromosome:
         teacher_counts = np.zeros(num_teachers, dtype=np.int32)
         session_day_slot = self.helpers['session_day_slot']
         
-        # --- 1️⃣ Count assignments and check per-session constraints ---
+        # --- 1. Count assignments and check per-session constraints ---
         for sid, teacher_indices in self.genes.items():
             session = self.sessions[sid]
             teacher_counts[teacher_indices] += 1
@@ -107,7 +107,7 @@ class OptimizedChromosome:
                         'severity': 'major'
                     })
         
-        # --- 2️⃣ Capacity / Max sessions per teacher ---
+        # --- 2. Capacity / Max sessions per teacher ---
         max_sessions = np.array([t['max_sessions'] for t in self.teachers], dtype=np.int32)
         excess = teacher_counts - max_sessions
         total_excess = np.sum(np.maximum(excess, 0))
@@ -115,7 +115,7 @@ class OptimizedChromosome:
         if total_excess > 0:
             violations.append({'type': 'capacity_exceeded', 'count': int(total_excess), 'severity': 'major'})
         
-        # --- 3️⃣ Wish violations ---
+        # --- 3. Wish violations ---
         wish_violations = 0
         for sid, teacher_indices in self.genes.items():
             day_idx, seance = session_day_slot[sid]
@@ -127,20 +127,20 @@ class OptimizedChromosome:
         if wish_violations > 0:
             violations.append({'type': 'wish_violation', 'count': wish_violations, 'severity': 'minor'})
         
-        # --- 4️⃣ Fragmentation penalty ---
+        # --- 4. Fragmentation penalty ---
         fragmentation_penalty = 0
         for t_idx, t in enumerate(self.teachers):
             assigned_days = sorted([session_day_slot[sid][0] for sid, tlist in self.genes.items() if t_idx in tlist])
             if assigned_days:
                 # compute gaps between consecutive assigned sessions
                 gaps = np.diff(assigned_days)
-                # penalize fragmented schedules; higher gaps → more penalty
+                # penalize fragmented schedules; higher gaps -> more penalty
                 fragmentation_penalty += np.sum(gaps > 1) * 10  # simple linear penalty
         base_score -= fragmentation_penalty
         if fragmentation_penalty > 0:
             violations.append({'type': 'fragmentation', 'count': fragmentation_penalty, 'severity': 'minor'})
         
-        # --- 5️⃣ Grade load balance ---
+        # --- 5. Grade load balance ---
         grade_loads = defaultdict(int)
         total_limits = defaultdict(int)
         for t_idx, t in enumerate(self.teachers):
@@ -160,13 +160,13 @@ class OptimizedChromosome:
         if balance_penalty > 0:
             violations.append({'type': 'grade_balance', 'penalty': balance_penalty, 'severity': 'major'})
         
-        # --- 6️⃣ Compute variance / workload balance ---
+        # --- 6. Compute variance / workload balance ---
         active_counts = teacher_counts[teacher_counts > 0]
         variance = float(np.var(active_counts)) if len(active_counts) > 0 else 0
         workload_score = 100 / (1 + variance)
         base_score += workload_score
         
-        # --- 7️⃣ Grade diversity per session ---
+        # --- 7. Grade diversity per session ---
         grade_score = 0
         for sid, teacher_indices in self.genes.items():
             grades = set(self.teachers[t_idx]['grade'] for t_idx in teacher_indices)
@@ -174,7 +174,7 @@ class OptimizedChromosome:
                 grade_score += len(grades) * 2
         base_score += grade_score
         
-        # --- 8️⃣ Utilization bonus ---
+        # --- 8. Utilization bonus ---
         active_teachers = int(np.sum(teacher_counts > 0))
         if active_teachers > 0:
             utilization_score = (np.sum(teacher_counts) / active_teachers) * 5
@@ -392,7 +392,7 @@ def genetic_algorithm_optimized(
         population = evaluate_population_parallel(population, num_workers)
     
     if verbose:
-        print(f"✓ Created {len(population)} solutions")
+        print(f"Created {len(population)} solutions")
         print(f"  Initial best fitness: {best_greedy.fitness_score:.2f}")
     
     best_ever = max(population, key=lambda c: c.fitness_score)
@@ -435,7 +435,7 @@ def genetic_algorithm_optimized(
         if best_this_gen.fitness_score > best_ever.fitness_score:
             best_ever = best_this_gen.copy()
             if verbose:
-                print(f"\n🎉 Gen {gen+1}: NEW BEST! Fitness={best_ever.fitness_score:.2f}")
+                print(f"\nGen {gen+1}: NEW BEST! Fitness={best_ever.fitness_score:.2f}")
         
         gen_stats = {
             'generation': gen + 1,
@@ -457,75 +457,11 @@ def genetic_algorithm_optimized(
     if verbose:
         improvement = ((best_ever.fitness_score - best_greedy.fitness_score) / 
                       abs(best_greedy.fitness_score) * 100)
-        print(f"\n✓ Optimization complete")
+        print(f"\nOptimization complete")
         print(f"  Final fitness: {best_ever.fitness_score:.2f}")
         print(f"  Improvement: {improvement:+.2f}%")
     
     return best_ever, history
-
-
-# ==================== ADAPTIVE PARAMETERS ====================
-
-def adaptive_genetic_algorithm(
-    initial_solution: Dict,
-    sessions: List,
-    teachers: List,
-    helpers: Dict,
-    time_budget_seconds: float = 30.0,
-    verbose: bool = True,
-    callback = None
-) -> Tuple[OptimizedChromosome, List[Dict]]:
-    """
-    Adaptive GA that automatically tunes parameters based on time budget.
-    
-    Perfect for competition: "I want best solution in 30 seconds"
-    
-    Dynamically adjusts:
-    - Population size based on problem size
-    - Generation count based on time remaining
-    - Mutation rate based on convergence
-    """
-    import time
-    
-    problem_size = len(sessions) * len(teachers)
-    
-    # Auto-tune population size
-    if problem_size < 1000:
-        pop_size = 30
-    elif problem_size < 5000:
-        pop_size = 50
-    else:
-        pop_size = 70
-    
-    # Estimate generations based on time budget
-    # Rough estimate: 0.1s per generation per 30 population
-    est_time_per_gen = (pop_size / 30) * 0.1
-    max_generations = int(time_budget_seconds / est_time_per_gen)
-    max_generations = max(50, min(max_generations, 200))  # Clamp 50-200
-    
-    if verbose:
-        print(f"\n🎯 ADAPTIVE GA")
-        print(f"  Time budget: {time_budget_seconds}s")
-        print(f"  Auto-tuned population: {pop_size}")
-        print(f"  Auto-tuned generations: {max_generations}")
-    
-    start_time = time.time()
-    
-    # Run optimized GA
-    best, history = genetic_algorithm_optimized(
-        initial_solution, sessions, teachers, helpers,
-        population_size=pop_size,
-        generations=max_generations,
-        use_parallel=True,
-        verbose=verbose,
-        callback=callback
-    )
-    
-    elapsed = time.time() - start_time
-    if verbose:
-        print(f"\n✓ Completed in {elapsed:.2f}s (budget: {time_budget_seconds}s)")
-    
-    return best, history
 
 
 # ==================== COMPARISON UTILITIES ====================

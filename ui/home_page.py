@@ -3,18 +3,19 @@
 # Main Home (Accueil) Page
 # ------------------------------------------------------
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QProgressBar
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QProgressBar,
+    QFormLayout, QFileDialog, QLabel, QPushButton, QSpinBox, QDateEdit, QTimeEdit
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from ui.widgets.grade_panel import GradePanel
 from ui.widgets.export_panel import ExportPanel
 from ui.widgets.data_input_panel import DataInputPanel
-from ui.widgets.dashboard_panel import DashboardPanel
 from ui.styles.style import apply_shadow_effect
 from workers.backend_worker import SchedulerWorker, ValidationWorker
 import pandas as pd
 from core.export_docs import export_surveillance_documents  
 import os
+import re
 
 
 class HomePage(QWidget):
@@ -27,6 +28,8 @@ class HomePage(QWidget):
         self.show_top_bar = show_top_bar
         self.worker = None
         self.result_data = None
+        self.final_df = None
+        self.reported_counts = {}
         self.output_dir = "data/output"
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -72,14 +75,15 @@ class HomePage(QWidget):
         content.addWidget(left_frame, 1)
         content.addWidget(right_frame, 2)
 
-        # === DASHBOARD ===
-        dashboard_frame = QFrame()
-        dashboard_frame.setObjectName("elevatedPanel")
-        dashboard_layout = QVBoxLayout(dashboard_frame)
-        dashboard_layout.setContentsMargins(16, 16, 16, 16)
-        self.dashboard_panel = DashboardPanel()
-        dashboard_layout.addWidget(self.dashboard_panel)
-        apply_shadow_effect(dashboard_frame)
+        # === BOTTOM ROW ===
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(16)
+        self.import_panel = self.create_import_panel()
+        self.report_panel = self.create_report_panel()
+        self.exchange_panel = self.create_exchange_panel()
+        bottom_row.addWidget(self.import_panel, 1)
+        bottom_row.addWidget(self.report_panel, 1)
+        bottom_row.addWidget(self.exchange_panel, 2)
 
         # === PROGRESS BAR ===
         self.progress_bar = QProgressBar()
@@ -88,12 +92,335 @@ class HomePage(QWidget):
 
         # === ASSEMBLE ===
         root_layout.addLayout(content)
-        root_layout.addWidget(dashboard_frame)
+        root_layout.addLayout(bottom_row)
         self.setLayout(root_layout)
 
         # Connect signal
-        self.data_panel.import_requested.connect(self.validate_and_run)
         self.ExportPanel.export_requested.connect(self.handle_export_request)
+
+    # ====================================================
+    # BOTTOM ROW PANELS
+    # ====================================================
+    def create_import_panel(self):
+        panel = QFrame()
+        panel.setObjectName("basePanel")
+        apply_shadow_effect(panel)
+
+        main_layout = QVBoxLayout(panel)
+        main_layout.setContentsMargins(8, 4, 8, 4)
+        main_layout.setSpacing(8)
+
+        title = QLabel("Modifier manuellement la base de données")
+        title.setObjectName("sectionLabel")
+        main_layout.addWidget(title)
+
+        import_btn = QPushButton("Importer")
+        import_btn.setObjectName("primaryButton")
+        import_btn.setFixedHeight(30)
+        import_btn.clicked.connect(self.handle_import)
+        main_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
+
+        return panel
+
+    def create_report_panel(self):
+        panel = QFrame()
+        panel.setObjectName("basePanel")
+        apply_shadow_effect(panel)
+
+        main_layout = QVBoxLayout(panel)
+        main_layout.setContentsMargins(8, 4, 8, 4)
+        main_layout.setSpacing(8)
+
+        title = QLabel("Rapporter des sessions")
+        title.setObjectName("sectionLabel")
+        main_layout.addWidget(title)
+
+        form_layout = QFormLayout()
+        form_layout.setSpacing(6)
+
+        self.report_prof_id = QSpinBox()
+        self.report_prof_id.setRange(0, 999999)
+
+        self.report_date = QDateEdit()
+        self.report_date.setCalendarPopup(True)
+
+        self.report_time = QTimeEdit()
+
+        form_layout.addRow(QLabel("ID enseignant:"), self.report_prof_id)
+        form_layout.addRow(QLabel("Date:"), self.report_date)
+        form_layout.addRow(QLabel("Heure:"), self.report_time)
+
+        main_layout.addLayout(form_layout)
+
+        report_btn = QPushButton("Rapporter")
+        report_btn.setObjectName("primaryButton")
+        report_btn.setFixedHeight(30)
+        report_btn.clicked.connect(self.handle_report)
+        main_layout.addWidget(report_btn, alignment=Qt.AlignCenter)
+
+        return panel
+
+    def create_exchange_panel(self):
+        panel = QFrame()
+        panel.setObjectName("basePanel")
+        apply_shadow_effect(panel)
+
+        main_layout = QVBoxLayout(panel)
+        main_layout.setContentsMargins(8, 4, 8, 4)
+        main_layout.setSpacing(4)
+
+        title = QLabel("Échanger des enseignants")
+        title.setObjectName("sectionLabel")
+        main_layout.addWidget(title)
+
+        form_layout = QHBoxLayout()
+        form_layout.setSpacing(20)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(6)
+
+        self.prof1_id = QSpinBox()
+        self.prof1_id.setRange(0, 999999)
+
+        self.prof1_date = QDateEdit()
+        self.prof1_date.setCalendarPopup(True)
+
+        self.prof1_time = QTimeEdit()
+
+        left_col.addWidget(QLabel("ID enseignant 1:"))
+        left_col.addWidget(self.prof1_id)
+        left_col.addWidget(QLabel("Date:"))
+        left_col.addWidget(self.prof1_date)
+        left_col.addWidget(QLabel("Heure:"))
+        left_col.addWidget(self.prof1_time)
+
+        right_col = QVBoxLayout()
+        right_col.setSpacing(6)
+
+        self.prof2_id = QSpinBox()
+        self.prof2_id.setRange(0, 999999)
+
+        self.prof2_date = QDateEdit()
+        self.prof2_date.setCalendarPopup(True)
+
+        self.prof2_time = QTimeEdit()
+
+        right_col.addWidget(QLabel("ID enseignant 2:"))
+        right_col.addWidget(self.prof2_id)
+        right_col.addWidget(QLabel("Date:"))
+        right_col.addWidget(self.prof2_date)
+        right_col.addWidget(QLabel("Heure:"))
+        right_col.addWidget(self.prof2_time)
+
+        form_layout.addLayout(left_col)
+        form_layout.addLayout(right_col)
+
+        main_layout.addLayout(form_layout)
+
+        swap_btn = QPushButton("Échanger")
+        swap_btn.setObjectName("primaryButton")
+        swap_btn.setFixedHeight(30)
+        swap_btn.clicked.connect(self.handle_exchange)
+        main_layout.addWidget(swap_btn, alignment=Qt.AlignCenter)
+
+        return panel
+
+    # ====================================================
+    # BOTTOM ROW HANDLERS
+    # ====================================================
+    def handle_import(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Importer le fichier", "", "Excel Files (*.xlsx)")
+        if not path:
+            return
+
+        if not path.lower().endswith('.xlsx'):
+            QMessageBox.warning(self, "Erreur", "Le fichier doit être un .xlsx")
+            return
+
+        try:
+            df = pd.read_excel(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible de lire le fichier:\n{e}")
+            return
+
+        df = df.copy()
+        if hasattr(df.columns, "str"):
+            df.columns = df.columns.str.strip()
+
+        required_cols = ["Date", "Time", "Teacher"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                "Colonnes manquantes: " + ", ".join(missing_cols)
+            )
+            return
+
+        if "TeacherId" not in df.columns:
+            df["TeacherId"] = ""
+            QMessageBox.warning(
+                self,
+                "Attention",
+                "La colonne TeacherId est absente. Les échanges et rapports nécessitent un ID."
+            )
+
+        df["Teacher"] = df["Teacher"].fillna("").astype(str).str.strip()
+        df["TeacherId"] = df["TeacherId"].apply(self._normalize_teacher_id)
+        df["Date"] = df["Date"].apply(self._normalize_date_value)
+        df["Time"] = df["Time"].apply(self._normalize_time_value)
+
+        self.final_df = df
+        self.reported_counts = {}
+        self.result_data = {'final_df': df}
+        self._set_result_dataframe(df)
+
+        QMessageBox.information(
+            self,
+            "Succès",
+            f"Base importée avec succès depuis:\n{path}\n{len(df)} lignes importées."
+        )
+
+    def handle_exchange(self):
+        if not self._ensure_final_df():
+            return
+
+        if "TeacherId" not in self.final_df.columns:
+            QMessageBox.critical(self, "Erreur", "La colonne TeacherId est requise pour échanger.")
+            return
+
+        id1 = self._normalize_teacher_id(self.prof1_id.value())
+        id2 = self._normalize_teacher_id(self.prof2_id.value())
+
+        if not id1 or id1 == "0" or not id2 or id2 == "0":
+            QMessageBox.warning(self, "Attention", "Veuillez saisir deux IDs enseignants valides.")
+            return
+
+        idxs1 = self._find_matching_indices(self.final_df, id1, self.prof1_date, self.prof1_time)
+        idxs2 = self._find_matching_indices(self.final_df, id2, self.prof2_date, self.prof2_time)
+
+        if len(idxs1) != 1 or len(idxs2) != 1:
+            QMessageBox.warning(
+                self,
+                "Attention",
+                "Aucune session unique trouvée pour les critères fournis."
+            )
+            return
+
+        idx1 = idxs1[0]
+        idx2 = idxs2[0]
+        for col in ["Teacher", "TeacherId"]:
+            self.final_df.at[idx1, col], self.final_df.at[idx2, col] = (
+                self.final_df.at[idx2, col],
+                self.final_df.at[idx1, col]
+            )
+
+        self._set_result_dataframe(self.final_df)
+
+        QMessageBox.information(self, "Succès", "Échange effectué avec succès.")
+
+    def handle_report(self):
+        if not self._ensure_final_df():
+            return
+
+        if "TeacherId" not in self.final_df.columns:
+            QMessageBox.critical(self, "Erreur", "La colonne TeacherId est requise pour reporter.")
+            return
+
+        teacher_id = self._normalize_teacher_id(self.report_prof_id.value())
+        if not teacher_id or teacher_id == "0":
+            QMessageBox.warning(self, "Attention", "Veuillez saisir un ID enseignant valide.")
+            return
+
+        idxs = self._find_matching_indices(self.final_df, teacher_id, self.report_date, self.report_time)
+        if not idxs:
+            QMessageBox.warning(self, "Attention", "Aucune session correspondante trouvée.")
+            return
+
+        removed_count = len(idxs)
+        self.final_df = self.final_df.drop(index=idxs).reset_index(drop=True)
+        self.reported_counts[teacher_id] = self.reported_counts.get(teacher_id, 0) + removed_count
+        self._write_reported_counts()
+        self._set_result_dataframe(self.final_df)
+
+        QMessageBox.information(
+            self,
+            "Succès",
+            f"{removed_count} session(s) rapportée(s) pour l'enseignant {teacher_id}."
+        )
+
+    def _ensure_final_df(self):
+        if self.final_df is None or self.final_df.empty:
+            QMessageBox.warning(
+                self,
+                "Attention",
+                "Veuillez générer ou importer un planning avant de modifier."
+            )
+            return False
+        return True
+
+    def _set_result_dataframe(self, df):
+        if self.result_data is None:
+            self.result_data = {}
+        self.result_data['final_df'] = df
+        self.ExportPanel.set_result(self.result_data)
+        self.ExportPanel.path_field.setText(self.output_dir)
+        self.ExportPanel.export_btn.setEnabled(True)
+
+    def _normalize_teacher_id(self, value):
+        if pd.isna(value):
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+
+    def _normalize_date_value(self, value):
+        s = str(value).strip()
+        for pattern in (r"\d{2}/\d{2}/\d{4}", r"\d{4}-\d{2}-\d{2}", r"\d{2}/\d{2}"):
+            match = re.search(pattern, s)
+            if match:
+                return match.group(0)
+        return s
+
+    def _normalize_time_value(self, value):
+        s = str(value).strip()
+        match = re.search(r"\d{2}:\d{2}", s)
+        return match.group(0) if match else s
+
+    def _date_variants(self, qdate):
+        variants = [
+            qdate.date().toString("dd/MM"),
+            qdate.date().toString("dd/MM/yyyy"),
+            qdate.date().toString("yyyy-MM-dd"),
+        ]
+        return list(dict.fromkeys(self._normalize_date_value(v) for v in variants))
+
+    def _find_matching_indices(self, df, teacher_id, date_edit, time_edit):
+        teacher_id = self._normalize_teacher_id(teacher_id)
+        date_variants = set(self._date_variants(date_edit))
+        time_value = self._normalize_time_value(time_edit.time().toString("HH:mm"))
+
+        df_teacher = df["TeacherId"].apply(self._normalize_teacher_id)
+        df_date = df["Date"].apply(self._normalize_date_value)
+        df_time = df["Time"].apply(self._normalize_time_value)
+
+        mask = df_teacher == teacher_id
+        mask &= df_date.isin(date_variants)
+        mask &= df_time == time_value
+
+        return df.index[mask].tolist()
+
+    def _write_reported_counts(self):
+        if not self.reported_counts:
+            return
+
+        rows = [
+            {"Teacher": teacher_id, "Count": count}
+            for teacher_id, count in sorted(self.reported_counts.items())
+        ]
+        report_df = pd.DataFrame(rows)
+        report_path = os.path.join(self.output_dir, "reported_sessions.csv")
+        report_df.to_csv(report_path, index=False)
 
     # ====================================================
     # STEP 1 — VALIDATION & RUN
@@ -219,10 +546,6 @@ class HomePage(QWidget):
         self.progress_bar.setVisible(False)
         self.data_panel.import_btn.setEnabled(True)
         self.data_panel.import_btn.setText("Importer")
-
-        # Stats display
-        if 'stats' in result:
-            self.dashboard_panel.update_stats(result['stats'])
         
         # Unwrap hybrid result
         hybrid_result = result.get('result', result)
@@ -231,12 +554,9 @@ class HomePage(QWidget):
         df = self._build_assignment_dataframe(hybrid_result)
         if df is not None:
             result['final_df'] = df
-
-
-        # Enable export panel but do not export anything
-        self.ExportPanel.set_result(result)
-        self.ExportPanel.path_field.setText(self.output_dir)
-        self.ExportPanel.export_btn.setEnabled(True)
+            self.final_df = df
+            self.reported_counts = {}
+            self._set_result_dataframe(df)
 
 
     def on_error(self, error_msg):
@@ -289,7 +609,7 @@ class HomePage(QWidget):
     # STEP 6 — HELPER: BUILD ASSIGNMENT DATAFRAME
     # ====================================================
     def _build_assignment_dataframe(self, hybrid_result):
-        """Build simplified DataFrame for Word export (Date, Time, Teacher)."""
+        """Build simplified DataFrame for Word export (Date, Time, Teacher, TeacherId)."""
         try:
             assignments = []
             sessions = hybrid_result.get('sessions', [])
@@ -303,11 +623,15 @@ class HomePage(QWidget):
                 assigned_indices = final_assignment.get(session_id, [])
 
                 for t_idx in assigned_indices:
-                    teacher = teachers[t_idx].get('name', 'Inconnu')
+                    teacher = teachers[t_idx]
+                    teacher_name = teacher.get('name', 'Inconnu')
+                    teacher_id = teacher.get('id')
+                    teacher_id = '' if teacher_id is None else str(teacher_id)
                     assignments.append({
                         'Date': date,
                         'Time': time,
-                        'Teacher': teacher
+                        'Teacher': teacher_name,
+                        'TeacherId': teacher_id
                     })
 
             return pd.DataFrame(assignments)
