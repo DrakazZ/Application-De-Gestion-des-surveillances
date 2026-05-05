@@ -3,9 +3,10 @@
 # Main Home (Accueil) Page
 # ------------------------------------------------------
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QProgressBar,
-    QFormLayout, QFileDialog, QLabel, QPushButton, QSpinBox, QDateEdit, QTimeEdit
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QProgressBar, QInputDialog, QLabel, QPushButton, QFileDialog, QFormLayout, QSpinBox, QDateEdit, QTimeEdit
+    
 )
+
 from PyQt5.QtCore import Qt, pyqtSignal
 from ui.widgets.grade_panel import GradePanel
 from ui.widgets.export_panel import ExportPanel
@@ -486,6 +487,19 @@ class HomePage(QWidget):
         self.progress_bar.setVisible(False)
         self.data_panel.import_btn.setEnabled(True)
 
+        missing_entries = result.get('missing_entries', {})
+        if any(missing_entries.get(key) for key in missing_entries):
+            filled = self._fill_missing_entries(result['files'], missing_entries)
+            if not filled:
+                QMessageBox.warning(
+                    self,
+                    "Validation",
+                    "Missing values were not provided. Validation cancelled."
+                )
+                return
+            self.validate_and_run(result['files'])
+            return
+
         if not result['valid']:
             error_msg = "Erreurs de validation:\n\n" + "\n".join(result['errors'])
             if result['warnings']:
@@ -501,6 +515,55 @@ class HomePage(QWidget):
             )
 
         self.run_generation(result['files'])
+
+    def _fill_missing_entries(self, files, missing_entries):
+        import pandas as pd
+
+        for file_key, entries in missing_entries.items():
+            if not entries:
+                continue
+            path = files.get(file_key)
+            if not path:
+                QMessageBox.warning(self, "Validation", f"Missing file path for {file_key}.")
+                return False
+
+            try:
+                df = pd.read_excel(path)
+            except Exception as exc:
+                QMessageBox.critical(self, "Validation", f"Cannot read {file_key}: {exc}")
+                return False
+
+            for entry in entries:
+                row_idx = entry.get('row')
+                column = entry.get('column')
+                row_data = entry.get('row_data', {})
+
+                if row_idx is None or column is None:
+                    continue
+                if row_idx not in df.index:
+                    QMessageBox.warning(
+                        self,
+                        "Validation",
+                        f"Row {row_idx} not found in {file_key}."
+                    )
+                    return False
+
+                prompt = (
+                    f"Missing value for column '{column}' in row:\n"
+                    f"{row_data}\n\nPlease enter a value:"
+                )
+                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
+                if not ok or not value.strip():
+                    return False
+                df.at[row_idx, column] = value.strip()
+
+            try:
+                df.to_excel(path, index=False)
+            except Exception as exc:
+                QMessageBox.critical(self, "Validation", f"Cannot write {file_key}: {exc}")
+                return False
+
+        return True
 
     # ====================================================
     # STEP 3 — RUN GENERATION

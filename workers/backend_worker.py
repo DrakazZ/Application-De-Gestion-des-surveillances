@@ -2,7 +2,6 @@
 Backend Worker - Runs scheduling algorithm in separate thread
 Communicates with UI via Qt signals
 """
-from PyQt5.QtWidgets import QInputDialog
 from PyQt5.QtCore import QThread, pyqtSignal
 import pandas as pd
 import traceback
@@ -202,6 +201,20 @@ class ValidationWorker(QThread):
         
         errors = []
         warnings = []
+        missing_entries = {
+            'professeurs': [],
+            'souhaits': [],
+            'salles': []
+        }
+
+        def row_snapshot(row):
+            data = {}
+            for key, value in row.to_dict().items():
+                if pd.isna(value):
+                    data[key] = ""
+                else:
+                    data[key] = str(value)
+            return data
         
         try:
             # Check professors Excel
@@ -229,38 +242,26 @@ class ValidationWorker(QThread):
                             for col in missing_cols:
                                 if col == 'code_smartex_ens' and not participe:
                                     continue
-                                current_info = row.to_dict()
-                                prompt = f"Missing value for column '{col}' in row:\n{current_info}\n\nPlease enter a value:"
-                                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
-                                if ok and value.strip():
-                                    df.at[idx, col] = value.strip()  
-                                else:
-                                    errors.append(f"Missing value for {col} in row {idx}")
-                                    break
-                        if 'code_smartex_ens' in df.columns and participe:
-                            code_value = str(df.at[idx, 'code_smartex_ens']).strip()
-                            if code_value.lower() in ('', 'nan', 'none'):
-                                current_info = row.to_dict()
-                                prompt = (
-                                    "Missing value for column 'code_smartex_ens' in row:\n"
-                                    f"{current_info}\n\nPlease enter a value:"
-                                )
-                                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
-                                if ok and value.strip():
-                                    df.at[idx, 'code_smartex_ens'] = value.strip()
-                                else:
-                                    errors.append(f"Missing value for code_smartex_ens in row {idx}")
-                                    break
+                                missing_entries['professeurs'].append({
+                                    'row': int(idx),
+                                    'column': col,
+                                    'row_data': row_snapshot(row)
+                                })
 
-                    participe_mask = df['participe_surveillance'].astype(str).str.lower().str.strip() == 'true'
-                    codes = df.loc[participe_mask, 'code_smartex_ens']
-                    code_str = codes.astype(str).str.strip()
-                    valid_mask = ~code_str.isin(['', 'nan', 'none'])
-                    dup_mask = code_str[valid_mask].duplicated(keep=False)
-                    if dup_mask.any():
-                        dup_values = code_str[valid_mask][dup_mask].unique().tolist()
-                        errors.append(f"Duplicate teacher IDs found: {dup_values}")
-                    df.to_excel(self.files['professeurs'], index=False)  
+                    if not missing_entries['professeurs']:
+                        participe_mask = (
+                            df['participe_surveillance']
+                            .astype(str)
+                            .str.lower()
+                            .str.strip() == 'true'
+                        )
+                        codes = df.loc[participe_mask, 'code_smartex_ens']
+                        code_str = codes.astype(str).str.strip()
+                        valid_mask = ~code_str.isin(['', 'nan', 'none'])
+                        dup_mask = code_str[valid_mask].duplicated(keep=False)
+                        if dup_mask.any():
+                            dup_values = code_str[valid_mask][dup_mask].unique().tolist()
+                            errors.append(f"Duplicate teacher IDs found: {dup_values}")
                 except Exception as e:
                     errors.append(f"Cannot read professors file: {e}")
             
@@ -280,12 +281,11 @@ class ValidationWorker(QThread):
                         missing_cols = [c for c in required_cols if pd.isnull(row[c]) or str(row[c]).strip() == ""]
                         if missing_cols:
                             for col in missing_cols:
-                                current_info = row.to_dict()
-                                prompt = f"Missing value for column '{col}' in row:\n{current_info}\n\nPlease enter a value:"
-                                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
-                                if ok and value.strip():
-                                    df.at[idx, col] = value.strip()
-                    df.to_excel(self.files['souhaits'], index=False)
+                                missing_entries['souhaits'].append({
+                                    'row': int(idx),
+                                    'column': col,
+                                    'row_data': row_snapshot(row)
+                                })
 
                 except Exception as e:
                     errors.append(f"Cannot read wishes file: {e}")
@@ -306,20 +306,21 @@ class ValidationWorker(QThread):
                         missing_cols = [c for c in required_cols if pd.isnull(row[c]) or str(row[c]).strip() == ""]
                         if missing_cols:
                             for col in missing_cols:
-                                current_info = row.to_dict()
-                                prompt = f"Missing value for column '{col}' in row:\n{current_info}\n\nPlease enter a value:"
-                                value, ok = QInputDialog.getText(self, "Missing Data", prompt)
-                                if ok and value.strip():
-                                    df.at[idx, col] = value.strip()
-                    df.to_excel(self.files['salles'], index=False)
+                                missing_entries['salles'].append({
+                                    'row': int(idx),
+                                    'column': col,
+                                    'row_data': row_snapshot(row)
+                                })
                 except Exception as e:
                     errors.append(f"Cannot read rooms file: {e}")
             
+            has_missing = any(missing_entries[key] for key in missing_entries)
             self.finished.emit({
-                'valid': len(errors) == 0,
+                'valid': len(errors) == 0 and not has_missing,
                 'errors': errors,
                 'warnings': warnings,
-                'files': self.files
+                'files': self.files,
+                'missing_entries': missing_entries
             })
             
         except Exception as e:
